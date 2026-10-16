@@ -13,6 +13,7 @@ The minor version will be incremented upon a breaking change and the patch versi
 ### Features
 
 - client: Expose `parse_logs` to decode events from transaction logs while tracking the CPI stack ([#5078](https://github.com/otter-sec/anchor/pull/5078)).
+- lang-v2: Allow handlers to take borrowed struct args such as `MyInstructionArgs<'_> { a: u32, some_data: &[u8], entries: &[Entry] }`, decoded zero-copy from the entrypoint's instruction data. `&[T]` works for `#[repr(C)]`, padding-free `T`. Lifetime generics were previously rejected by IDL generation.
 
 ### Fixes
 
