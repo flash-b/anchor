@@ -214,6 +214,7 @@ pub struct MyInstruction<'a> {
     pub a: u32,
     pub some_data: &'a [u8],
     pub entries: &'a [Entry],
+    pub label: &'a str,
 }
 
 #[derive(Accounts)]
@@ -224,7 +225,12 @@ pub mod borrowed_struct_instruction_args {
     use super::*;
 
     pub fn run(_ctx: &mut Context<Noop>, ix: MyInstruction<'_>) -> Result<()> {
-        let _ = (ix.a, ix.some_data, ix.entries);
+        let _ = (ix.a, ix.some_data, ix.entries, ix.label);
+        Ok(())
+    }
+
+    pub fn run_flat(_ctx: &mut Context<Noop>, label: &str, some_data: &[u8]) -> Result<()> {
+        let _ = (label, some_data);
         Ok(())
     }
 }
@@ -238,6 +244,7 @@ fn borrowed_fields_lower_to_owned_idl_types() {
     assert!(type_def.contains(
         "{\"name\":\"entries\",\"type\":{\"vec\":{\"defined\":{\"name\":\"Entry\"}}}}"
     ));
+    assert!(type_def.contains("{\"name\":\"label\",\"type\":\"string\"}"));
     assert!(!type_def.contains("generics"));
 
     let mut accounts = alloc::vec::Vec::new();

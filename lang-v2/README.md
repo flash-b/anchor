@@ -129,6 +129,8 @@ Here are some examples of optimizations present in Anchor v2.
   // or flat: pub fn my_ix(ctx: &mut Context<MyAccounts>, a: u32, some_data: &[u8], entries: &[Entry])
   ```
 
+  The `<'_>` is required: `#[program]` copies arg types into generated structs, so a bare `MyInstructionArgs` fails with E0106 (missing lifetime specifier).
+
   The wire format is the same as the owned `Vec<_>` / `String` forms (`&[u8]` shows up as `bytes` in the IDL, `&[Entry]` as `vec<Entry>`). `&[T]` elements are cast in place, so `T` must be `#[repr(C)]` with no padding, built from zero-copy fields (`u8`, `[u8; N]`, `Address`, other such structs). Instruction data has no alignment guarantee at a given arg offset, so keep element fields alignment-1: a slice of `u64` (or of a struct holding one) is rejected with `InstructionDidNotDeserialize` when it lands misaligned. Use `[u8; 8]` or an owned `Vec` instead.
 - **`remaining_accounts()` is lazy-cached.** First call walks the account cursor; subsequent calls return a clone of the cached vec. Zero overhead for instructions that don't touch it.
 

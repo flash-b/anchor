@@ -13,10 +13,11 @@ The minor version will be incremented upon a breaking change and the patch versi
 ### Features
 
 - client: Expose `parse_logs` to decode events from transaction logs while tracking the CPI stack ([#5078](https://github.com/otter-sec/anchor/pull/5078)).
-- lang-v2: Allow handlers to take borrowed struct args such as `MyInstructionArgs<'_> { a: u32, some_data: &[u8], entries: &[Entry] }`, decoded zero-copy from the entrypoint's instruction data. `&[T]` works for `#[repr(C)]`, padding-free `T`. Lifetime generics were previously rejected by IDL generation.
 
 ### Fixes
 
+- lang-v2: Fix `#[program]` panicking on handler args with lifetime generics such as `MyArgs<'_>`, a regression from [#5073](https://github.com/otter-sec/anchor/pull/5073).
+- lang-v2: Fix `idl-build` failing on borrowed `&str` instruction args and `#[derive(IdlType)]` fields (`str` has no IDL type information).
 - lang-v2: Keep Pod wrapper types (`PodU64`, `PodBool`, ..) in the IDL instead of lowering them to native types, so `declare_program!` generates zero-copy structs with correct program's layout ([#5170](https://github.com/otter-sec/anchor/pull/5170))
 - lang-v2: Restore `AnchorSerialize` and `AnchorDeserialize` as traits for generic bounds alongside the derive macros ([#5078](https://github.com/otter-sec/anchor/pull/5078)).
 

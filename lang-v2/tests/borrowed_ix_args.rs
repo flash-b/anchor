@@ -3,8 +3,9 @@
 //!
 //! Run: `cargo test -p anchor-lang --test borrowed_ix_args`
 
-// `unused_variables`: `WithBorrowedArgs` has no fields that read `ix`.
-#![allow(dead_code, unexpected_cfgs, unused_variables)]
+// `unused_variables`: `exit_accounts` (from the `Accounts` derive) decodes
+// `ix`, but no exit reads it.
+#![allow(unexpected_cfgs, unused_variables)]
 
 use {
     anchor_lang::{prelude::*, ErrorCode, InstructionData, TryAccounts},
@@ -70,18 +71,18 @@ std::thread_local! {
     static SEEN_ENTRIES: RefCell<Vec<Entry>> = const { RefCell::new(Vec::new()) };
 }
 
-fn record(a: u32, data: &[u8]) {
-    SEEN.with(|seen| seen.set(Some((a, data.as_ptr() as usize, data.len()))));
-}
-
-fn record_entries(a: u32, entries: &[Entry]) {
+fn record<T>(a: u32, data: &[T]) {
     SEEN.with(|seen| {
         seen.set(Some((
             a,
-            entries.as_ptr() as usize,
-            core::mem::size_of_val(entries),
+            data.as_ptr() as usize,
+            core::mem::size_of_val(data),
         )))
     });
+}
+
+fn record_entries(a: u32, entries: &[Entry]) {
+    record(a, entries);
     SEEN_ENTRIES.with(|seen| *seen.borrow_mut() = entries.to_vec());
 }
 
@@ -127,8 +128,12 @@ pub mod borrowed_ix_args {
     }
 
     pub fn wide(_ctx: &mut Context<Noop>, entries: &[WideEntry]) -> Result<()> {
-        record(0, &[]);
-        let _ = entries;
+        record(0, entries);
+        Ok(())
+    }
+
+    pub fn wide_after_u32(_ctx: &mut Context<Noop>, a: u32, entries: &[WideEntry]) -> Result<()> {
+        record(a, entries);
         Ok(())
     }
 }
@@ -390,4 +395,35 @@ fn misaligned_wide_struct_slice_is_rejected() {
     let (result, _) = dispatch(&data);
     assert_eq!(result, did_not_deserialize());
     assert!(SEEN.with(|seen| seen.take()).is_none());
+}
+
+#[test]
+fn wide_struct_slice_decodes_when_preceding_args_align_it() {
+    let entries = [
+        WideEntry {
+            owner: Address::new_from_array([5; 32]),
+            amount: 1,
+        },
+        WideEntry {
+            owner: Address::new_from_array([6; 32]),
+            amount: u64::MAX,
+        },
+    ];
+    let data = instruction::WideAfterU32 {
+        a: 9,
+        entries: &entries,
+    }
+    .data();
+
+    // disc (8) + a: u32 (4) + length prefix (4) = 16: u64-aligned, so the
+    // same element type that `misaligned_wide_struct_slice_is_rejected`
+    // refuses decodes here. Alignment depends on the args before the slice.
+    let (result, ix_range) = dispatch(&data);
+    assert_eq!(result, 0);
+
+    let seen = take_seen();
+    assert_eq!(seen.a, 9);
+    assert_eq!(seen.data.start, ix_range.start + 8 + 4 + 4);
+    assert_eq!(seen.data.start % core::mem::align_of::<WideEntry>(), 0);
+    assert_eq!(seen.data.len(), entries.len() * size_of::<WideEntry>());
 }
