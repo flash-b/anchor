@@ -88,6 +88,9 @@ with every v1 Borsh encoding:
 - Borsh rejects NaN during float serialization, while Wincode accepts it. Code
   migrating from v1 should validate float values explicitly when NaN is not a
   valid application value.
+- Borsh rejects a dynamically sized collection of zero-sized elements, such as
+  `Vec<()>`. Wincode accepts a `u32` length prefix and writes no element
+  bytes. Ordinary account types do not use this shape.
 
 These are intentional serialization differences in the Wincode path, not
 reasons to reject otherwise valid values with the former compatibility guard.
@@ -153,6 +156,8 @@ None of these carry an `'info` lifetime — pinocchio's account model is static-
 | `UncheckedAccount` | Escape hatch. No validation. No generic `close` support. (v1 compat) |
 | `Sysvar<T>` | `Sysvar<Clock>`, `Sysvar<Rent>`. Prefer `Clock::get()` / `Rent::get()` syscalls where possible. (v1 compat) |
 | `Sysvar<SysvarInstructions>` | Instruction introspection. No syscall exists for this sysvar, so the account must be passed in the transaction; the wrapper reads its data and derefs to pinocchio's `Instructions`. |
+
+**Aliased accounts.** A transaction can pass one account in more than one slot, and every slot shares that account's runtime borrow state. Wrappers with typed data (`Account<T>`, `BorshAccount<T>`, `Slab<H, T>`, `Sysvar<SysvarInstructions>`) hold a borrow while they are alive: a mutable load needs no other borrow, and a read-only load needs no mutable borrow. A conflicting alias fails with `AccountBorrowFailed`. `Signer`, `SystemAccount`, `UncheckedAccount`, and `Program<T>` expose no typed data and hold no borrow, so one wallet can be both payer and authority. Raw data borrows and CPI handles through those wrappers still fail while a typed wrapper holds a conflicting borrow.
 
 ## CPI Semantics
 
@@ -227,7 +232,7 @@ impl AnchorAccount for DynamicAccount<Post> {
     type Data = PostFixed;
     fn load(view, pid)   -> Result<Self>     { /* parse disc + tail */ }
     fn exit(&mut self)   -> ProgramResult    { /* realloc to fit, persist */ }
-    // load_mut, load_mut_after_init, account
+    // load_mut, account
 }
 ```
 
