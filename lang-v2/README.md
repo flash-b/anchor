@@ -88,6 +88,9 @@ with every v1 Borsh encoding:
 - Borsh rejects NaN during float serialization, while Wincode accepts it. Code
   migrating from v1 should validate float values explicitly when NaN is not a
   valid application value.
+- Borsh rejects a dynamically sized collection of zero-sized elements, such as
+  `Vec<()>`. Wincode accepts a `u32` length prefix and writes no element
+  bytes. Ordinary account types do not use this shape.
 
 These are intentional serialization differences in the Wincode path, not
 reasons to reject otherwise valid values with the former compatibility guard.
@@ -108,6 +111,30 @@ Here are some examples of optimizations present in Anchor v2.
 - **Typed `CpiHandle` lets us use pinocchio's unchecked CPI.** The unchecked path would be UB under stale-borrow aliasing, but the Rust borrow checker rules that out at compile time — so `CpiContext::invoke()` takes it. Turns UB into a compile error and drops one runtime check per CPI.
 - **`const-rent` feature** bakes the rent formula into the binary so `create_account` skips the `Rent::get()` sysvar. Saves ~85 CU per `create_account`.
 - **Guardrails compile away** when you drop the feature. `check_program_id` / the `is_writable` check in `load_mut` just aren't emitted. Smaller binary in prod.
+- **Borrowed instruction args.** Handler args (and `#[instruction(...)]` args) can borrow from the instruction data instead of copying it onto the heap: `&[u8]`, `&str`, `&[T]` of zero-copy structs, or a struct with a lifetime holding any of those. The borrowed slice points straight into the entrypoint's input buffer, so it's valid for the whole handler:
+
+  ```rust
+  #[repr(C)]
+  #[derive(AnchorSerialize, AnchorDeserialize, IdlType)]
+  pub struct Entry {
+      pub owner: Address,
+      pub amount: [u8; 8],
+  }
+
+  #[derive(AnchorSerialize, AnchorDeserialize, IdlType)]
+  pub struct MyInstructionArgs<'a> {
+      pub a: u32,
+      pub some_data: &'a [u8],
+      pub entries: &'a [Entry],
+  }
+
+  pub fn my_ix(ctx: &mut Context<MyAccounts>, args: MyInstructionArgs<'_>) -> Result<()> { /* ... */ }
+  // or flat: pub fn my_ix(ctx: &mut Context<MyAccounts>, a: u32, some_data: &[u8], entries: &[Entry])
+  ```
+
+  The `<'_>` is required: `#[program]` copies arg types into generated structs, so a bare `MyInstructionArgs` fails with E0106 (missing lifetime specifier).
+
+  The wire format is the same as the owned `Vec<_>` / `String` forms (`&[u8]` shows up as `bytes` in the IDL, `&[Entry]` as `vec<Entry>`). `&[T]` elements are cast in place, so `T` must be `#[repr(C)]` with no padding, built from zero-copy fields (`u8`, `[u8; N]`, `Address`, other such structs). Instruction data has no alignment guarantee at a given arg offset, so keep element fields alignment-1: a slice of `u64` (or of a struct holding one) is rejected with `InstructionDidNotDeserialize` when it lands misaligned. Use `[u8; 8]` or an owned `Vec` instead.
 - **`remaining_accounts()` is lazy-cached.** First call walks the account cursor; subsequent calls return a clone of the cached vec. Zero overhead for instructions that don't touch it.
 
 ## Account types
@@ -129,6 +156,8 @@ None of these carry an `'info` lifetime — pinocchio's account model is static-
 | `UncheckedAccount` | Escape hatch. No validation. No generic `close` support. (v1 compat) |
 | `Sysvar<T>` | `Sysvar<Clock>`, `Sysvar<Rent>`. Prefer `Clock::get()` / `Rent::get()` syscalls where possible. (v1 compat) |
 | `Sysvar<SysvarInstructions>` | Instruction introspection. No syscall exists for this sysvar, so the account must be passed in the transaction; the wrapper reads its data and derefs to pinocchio's `Instructions`. |
+
+**Aliased accounts.** A transaction can pass one account in more than one slot, and every slot shares that account's runtime borrow state. Wrappers with typed data (`Account<T>`, `BorshAccount<T>`, `Slab<H, T>`, `Sysvar<SysvarInstructions>`) hold a borrow while they are alive: a mutable load needs no other borrow, and a read-only load needs no mutable borrow. A conflicting alias fails with `AccountBorrowFailed`. `Signer`, `SystemAccount`, `UncheckedAccount`, and `Program<T>` expose no typed data and hold no borrow, so one wallet can be both payer and authority. Raw data borrows and CPI handles through those wrappers still fail while a typed wrapper holds a conflicting borrow.
 
 ## CPI Semantics
 
@@ -203,7 +232,7 @@ impl AnchorAccount for DynamicAccount<Post> {
     type Data = PostFixed;
     fn load(view, pid)   -> Result<Self>     { /* parse disc + tail */ }
     fn exit(&mut self)   -> ProgramResult    { /* realloc to fit, persist */ }
-    // load_mut, load_mut_after_init, account
+    // load_mut, account
 }
 ```
 

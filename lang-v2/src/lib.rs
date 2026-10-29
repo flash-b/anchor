@@ -106,14 +106,19 @@ pub use wincode;
 ///   intentionally follows wincode here, so floating-point values (including
 ///   NaN) are supported. Programs migrating from v1 should account for this
 ///   serialization difference when validating or comparing float values.
+/// - **Dynamic collections of zero-sized elements** (`Vec<()>`, and the same
+///   shape for any other zero-sized `T`): borsh rejects them. Wincode writes a
+///   `u32` length prefix and no element bytes, then reads that length back.
+///   This does not show up in ordinary account data. Wincode still bounds the
+///   length through its preallocation limit.
 ///
 /// Programs that don't use these types are unaffected.
 ///
 /// # Borrowed zero-copy caveat
 ///
-/// Borsh's u32 length prefix means borrowed wide slices like `&[u64]` start
-/// four bytes into the buffer and therefore fail wincode's zero-copy
-/// alignment guard. `BORSH_CONFIG` keeps that guard enabled so safe
+/// Borsh's u32 length prefix shifts borrowed slice elements by four bytes, so
+/// whether a wide slice like `&[u64]` is aligned depends on the args before
+/// it. `BORSH_CONFIG` keeps wincode's zero-copy alignment guard enabled so safe
 /// deserialization cannot form a misaligned Rust reference; use owned
 /// arguments (`Vec<u64>`) or align-1 borrowed data (`&[u8]`, `&str`) instead.
 pub const BORSH_CONFIG: BorshConfig = wincode::config::Configuration::new();
@@ -199,14 +204,14 @@ pub use {
         program, Accounts, AnchorDeserialize, AnchorSerialize, InitSpace, ToCpiAccounts, __erase,
     },
     bytemuck,
-    context::{Bumps, Context, MutMask},
+    context::{Bumps, Context},
     context_cpi::{unchecked_invoke_signed_fixed, CpiContext},
     cpi::{
         create_account, create_account_signed, create_program_address,
         find_and_verify_program_address, find_and_verify_program_address_skip_curve,
         find_program_address, verify_program_address,
     },
-    cursor::{mut_mask_or_shifted, mut_mask_set_bit, AccountBitvec, AccountCursor},
+    cursor::AccountCursor,
     dispatch::{run_handler, TryAccounts},
     event::{sol_log_data, Event},
     hash::sha256,
@@ -362,7 +367,6 @@ pub enum ErrorCode {
     RequireKeysNeqViolated,
     RequireGtViolated,
     RequireGteViolated,
-    ConstraintDuplicateMutableAccount,
 }
 
 impl From<ErrorCode> for solana_program_error::ProgramError {
@@ -404,9 +408,6 @@ impl From<ErrorCode> for solana_program_error::ProgramError {
             ErrorCode::RequireKeysNeqViolated => solana_program_error::ProgramError::Custom(2504),
             ErrorCode::RequireGtViolated => solana_program_error::ProgramError::Custom(2505),
             ErrorCode::RequireGteViolated => solana_program_error::ProgramError::Custom(2506),
-            ErrorCode::ConstraintDuplicateMutableAccount => {
-                solana_program_error::ProgramError::Custom(2040)
-            }
         }
     }
 }
